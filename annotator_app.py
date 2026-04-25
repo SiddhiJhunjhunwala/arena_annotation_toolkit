@@ -100,10 +100,11 @@ HTML = r"""<!DOCTYPE html>
     color: var(--text);
     font-family: var(--sans);
     font-size: 14px;
-    min-height: 100vh;
+    height: 100vh;
     display: grid;
-    grid-template-rows: 56px 1fr;
-    grid-template-columns: 1fr 360px;
+    grid-template-rows: 52px 1fr;
+    grid-template-columns: 280px 1fr 340px;
+    overflow: hidden;
   }
 
   /* ── Header ── */
@@ -113,8 +114,8 @@ HTML = r"""<!DOCTYPE html>
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
-    padding: 0 24px;
-    gap: 24px;
+    padding: 0 16px;
+    gap: 16px;
   }
 
   .logo {
@@ -172,12 +173,144 @@ HTML = r"""<!DOCTYPE html>
   }
   .btn-export:hover { background: rgba(79,255,176,0.1); }
 
-  /* ── Main conversation area ── */
-  main {
+  /* ── Conversation list panel ── */
+  #list-panel {
     grid-column: 1;
     grid-row: 2;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .list-search {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+  }
+  .list-search input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    border-radius: 4px;
+    padding: 6px 10px 6px 28px;
+    outline: none;
+    transition: border-color 0.12s;
+  }
+  .list-search input:focus { border-color: var(--accent); }
+  .list-search .search-icon {
+    position: absolute;
+    left: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 11px;
+    pointer-events: none;
+  }
+
+  .list-filters {
+    padding: 8px 12px;
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .filter-chip {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 7px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .filter-chip:hover { color: var(--text); border-color: var(--text); }
+  .filter-chip.active-filter { color: var(--accent); border-color: var(--accent); background: rgba(79,255,176,0.08); }
+  .filter-chip.f-red.active-filter    { color: var(--accent2); border-color: var(--accent2); background: rgba(255,107,107,0.08); }
+  .filter-chip.f-yellow.active-filter { color: var(--accent3); border-color: var(--accent3); background: rgba(255,204,68,0.08); }
+  .filter-chip.f-blue.active-filter   { color: var(--accent4); border-color: var(--accent4); background: rgba(116,185,255,0.08); }
+
+  #conv-list {
     overflow-y: auto;
-    padding: 24px;
+    flex: 1;
+  }
+
+  .conv-item {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .conv-item:hover { background: rgba(255,255,255,0.03); }
+  .conv-item.selected { background: rgba(79,255,176,0.07); border-left: 2px solid var(--accent); }
+
+  .conv-item-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .conv-id {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 120px;
+  }
+  .conv-sig-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-response_ignoring  { background: var(--accent4); }
+  .dot-frustration_marker { background: var(--accent2); }
+  .dot-task_abandonment   { background: var(--accent3); }
+  .dot-none               { background: var(--muted); }
+  .dot-unannotated        { background: var(--border); border: 1px solid var(--muted); }
+
+  .conv-preview {
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .conv-annotated-badge {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--accent);
+    border: 1px solid rgba(79,255,176,0.3);
+    padding: 1px 5px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .list-count {
+    padding: 6px 12px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Main conversation area ── */
+  main {
+    grid-column: 2;
+    grid-row: 2;
+    overflow-y: auto;
+    padding: 20px;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -277,15 +410,15 @@ HTML = r"""<!DOCTYPE html>
 
   /* ── Sidebar annotation panel ── */
   aside {
-    grid-column: 2;
+    grid-column: 3;
     grid-row: 2;
     background: var(--surface);
     border-left: 1px solid var(--border);
     overflow-y: auto;
-    padding: 20px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 16px;
   }
 
   .panel-section { display: flex; flex-direction: column; gap: 8px; }
@@ -422,7 +555,7 @@ HTML = r"""<!DOCTYPE html>
 <body>
 
 <header>
-  <div class="logo">Arena Signal Annotator</div>
+  <div class="logo">Arena Annotator</div>
   <div class="progress-bar-wrap">
     <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
   </div>
@@ -438,8 +571,24 @@ HTML = r"""<!DOCTYPE html>
   </div>
 </header>
 
+<div id="list-panel">
+  <div class="list-search">
+    <span class="search-icon">⌕</span>
+    <input type="text" id="searchInput" placeholder="Search by ID or message…" oninput="filterList()">
+  </div>
+  <div class="list-filters">
+    <button class="filter-chip active-filter" data-sig="all"                onclick="setFilter(this)">All</button>
+    <button class="filter-chip f-blue"        data-sig="response_ignoring"  onclick="setFilter(this)">Ignoring</button>
+    <button class="filter-chip f-red"         data-sig="frustration_marker" onclick="setFilter(this)">Frustration</button>
+    <button class="filter-chip f-yellow"      data-sig="task_abandonment"   onclick="setFilter(this)">Abandon</button>
+    <button class="filter-chip"               data-sig="unannotated"        onclick="setFilter(this)">Todo</button>
+  </div>
+  <div class="list-count" id="listCount">—</div>
+  <div id="conv-list"></div>
+</div>
+
 <main id="main">
-  <div style="color:var(--muted);font-family:var(--mono);padding:40px;text-align:center;">Loading...</div>
+  <div style="color:var(--muted);font-family:var(--mono);padding:40px;text-align:center;">← Select a conversation</div>
 </main>
 
 <aside id="sidebar">
@@ -516,6 +665,8 @@ let records = [];
 let stats = {};
 let currentIdx = 0;
 let annotation = {};
+let activeFilter = 'all';
+let searchQuery = '';
 
 async function fetchData() {
   const res = await fetch('/api/data');
@@ -523,7 +674,8 @@ async function fetchData() {
   records = d.records;
   stats = d.stats;
   updateStats();
-  renderRecord(currentIdx);
+  renderList();
+  if (records.length) renderRecord(currentIdx);
 }
 
 function updateStats() {
@@ -534,6 +686,77 @@ function updateStats() {
   document.getElementById('statAbandonment').textContent = stats.by_signal?.task_abandonment || 0;
   const pct = stats.total ? (stats.annotated / stats.total * 100) : 0;
   document.getElementById('progressFill').style.width = pct + '%';
+}
+
+function getFilteredIndices() {
+  const q = searchQuery.toLowerCase();
+  return records.reduce((acc, rec, i) => {
+    const sig    = rec.annotation?.confirmed_signal;
+    const isAnnotated = sig !== null && sig !== undefined;
+
+    // filter
+    if (activeFilter === 'unannotated' && isAnnotated) return acc;
+    if (activeFilter !== 'all' && activeFilter !== 'unannotated' && rec.feedback_type !== activeFilter) return acc;
+
+    // search
+    if (q) {
+      const id      = String(rec.question_id || rec.conv_id || i).toLowerCase();
+      const preview = (rec.user_msg_preview || '').toLowerCase();
+      const signal  = (rec.feedback_type || '').toLowerCase();
+      if (!id.includes(q) && !preview.includes(q) && !signal.includes(q)) return acc;
+    }
+    acc.push(i);
+    return acc;
+  }, []);
+}
+
+function renderList() {
+  const indices = getFilteredIndices();
+  document.getElementById('listCount').textContent = `${indices.length} conversation${indices.length !== 1 ? 's' : ''}`;
+
+  const container = document.getElementById('conv-list');
+  container.innerHTML = indices.map(i => {
+    const rec = records[i];
+    const sig = rec.annotation?.confirmed_signal;
+    const isAnnotated = sig !== null && sig !== undefined;
+    const dotClass = isAnnotated ? `dot-${sig || 'none'}` : 'dot-unannotated';
+    const sigType  = rec.feedback_type || '';
+    const preview  = rec.user_msg_preview || '';
+    const id       = rec.question_id || rec.conv_id || i;
+    const selected = i === currentIdx ? ' selected' : '';
+
+    return `<div class="conv-item${selected}" onclick="selectRecord(${i})">
+      <div class="conv-item-top">
+        <span class="conv-id" title="${escHtml(String(id))}">#${escHtml(String(id).substring(0,18))}</span>
+        <div style="display:flex;align-items:center;gap:5px">
+          ${isAnnotated ? '<span class="conv-annotated-badge">✓</span>' : ''}
+          <div class="conv-sig-dot ${dotClass}" title="${sigType}"></div>
+        </div>
+      </div>
+      <div class="conv-preview">${escHtml(preview.substring(0,60))}${preview.length > 60 ? '…' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function selectRecord(idx) {
+  currentIdx = idx;
+  renderList();
+  renderRecord(idx);
+  // scroll selected into view
+  const selected = document.querySelector('.conv-item.selected');
+  if (selected) selected.scrollIntoView({ block: 'nearest' });
+}
+
+function setFilter(btn) {
+  document.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active-filter'));
+  btn.classList.add('active-filter');
+  activeFilter = btn.dataset.sig;
+  renderList();
+}
+
+function filterList() {
+  searchQuery = document.getElementById('searchInput').value;
+  renderList();
 }
 
 function renderRecord(idx) {
@@ -556,29 +779,27 @@ function renderRecord(idx) {
     ai.innerHTML = '';
   }
 
-  // Build detected signal badges
   const badges = (rec.detected_signals || []).map(s =>
     `<span class="signal-badge sig-${s}">${s.replace(/_/g, ' ')}</span>`
   ).join(' ');
 
   document.getElementById('main').innerHTML = `
     <div class="record-meta">
-      <span>#${rec.question_id || currentIdx}</span>
+      <span>#${escHtml(String(rec.question_id || currentIdx))}</span>
       ${badges}
       <span>Winner: <strong style="color:var(--accent3)">${rec.winner || '—'}</strong></span>
       <span style="color:var(--muted)">${rec.num_user_turns || ''} user turns</span>
     </div>
     <div>
-      <div class="convo-label">Model A (${rec.model_a || ''})</div>
+      <div class="convo-label">Model A (${escHtml(rec.model_a || '')})</div>
       ${renderConvoHTML(rec.conversation_a, rec.turn)}
     </div>
     ${rec.conversation_b && rec.conversation_b.length ? `<div>
-      <div class="convo-label">Model B (${rec.model_b || ''})</div>
+      <div class="convo-label">Model B (${escHtml(rec.model_b || '')})</div>
       ${renderConvoHTML(rec.conversation_b, rec.turn)}
     </div>` : ''}
   `;
 
-  // Restore sidebar state
   restoreSidebarState();
 }
 
@@ -587,17 +808,13 @@ function renderConvoHTML(turns, signalTurnNumber) {
     return '<div class="conversation" style="color:var(--muted);font-size:12px;font-family:var(--mono);">No turns</div>';
   }
   const bubblesHTML = turns.map((t, i) => {
-    const isUser = t.role === 'user';
-    const turnNum = i + 1;
-    const isSignal = signalTurnNumber && turnNum === signalTurnNumber;
-    const avatarLabel = isUser ? 'U' : 'AI';
-    const avatarClass = isUser ? 'user-av' : 'asst-av';
-    const bubbleClass = isUser ? 'user' : 'assistant';
+    const isUser    = t.role === 'user';
+    const isSignal  = signalTurnNumber && (i + 1) === signalTurnNumber;
     const highlight = isSignal ? ' signal-highlight' : '';
     return `
       <div class="bubble-row ${isUser ? 'user' : ''}">
-        <div class="avatar ${avatarClass}">${avatarLabel}</div>
-        <div class="bubble ${bubbleClass}${highlight}">${escHtml(t.content)}</div>
+        <div class="avatar ${isUser ? 'user-av' : 'asst-av'}">${isUser ? 'U' : 'AI'}</div>
+        <div class="bubble ${isUser ? 'user' : 'assistant'}${highlight}">${escHtml(t.content)}</div>
       </div>`;
   }).join('');
   return `<div class="conversation">${bubblesHTML}</div>`;
@@ -608,17 +825,13 @@ function escHtml(s) {
 }
 
 function restoreSidebarState() {
-  // Reset all buttons
   document.querySelectorAll('.btn-choice').forEach(b => b.classList.remove('active'));
-
-  // Re-activate based on annotation
   ['confirmed_signal','confidence','task_domain'].forEach(field => {
     if (annotation[field]) {
       const btn = document.querySelector(`.btn-choice[data-field="${field}"][data-val="${annotation[field]}"]`);
       if (btn) btn.classList.add('active');
     }
   });
-
   document.getElementById('fieldEvidence').value   = annotation.signal_evidence || '';
   document.getElementById('fieldUpdated').value    = annotation.what_is_updated || '';
   document.getElementById('fieldPreference').value = annotation.inferred_preference || '';
@@ -628,7 +841,6 @@ function restoreSidebarState() {
 function setField(btn) {
   const field = btn.dataset.field;
   const val   = btn.dataset.val;
-  // toggle off if same
   if (annotation[field] === val) {
     annotation[field] = null;
     btn.classList.remove('active');
@@ -641,27 +853,26 @@ function setField(btn) {
 
 async function saveAndNext() {
   await saveAnnotation();
-  if (currentIdx < records.length - 1) {
-    currentIdx++;
-    await fetchData();
-    renderRecord(currentIdx);
+  const indices = getFilteredIndices();
+  const pos = indices.indexOf(currentIdx);
+  if (pos < indices.length - 1) {
+    selectRecord(indices[pos + 1]);
   } else {
-    showToast('All done! Export to Excel ↗');
+    showToast('All done in this view! Export to Excel ↗');
   }
 }
 
 async function navigate(dir) {
-  const next = currentIdx + dir;
-  if (next < 0 || next >= records.length) return;
-  // save current without advancing stats reload
+  const indices = getFilteredIndices();
+  const pos = indices.indexOf(currentIdx);
+  const nextPos = pos + dir;
+  if (nextPos < 0 || nextPos >= indices.length) return;
   await fetch('/api/save', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ index: currentIdx, annotation })
   });
-  currentIdx = next;
-  await fetchData();
-  renderRecord(currentIdx);
+  selectRecord(indices[nextPos]);
 }
 
 async function saveAnnotation() {
@@ -674,6 +885,7 @@ async function saveAnnotation() {
   if (d.ok) showToast('Saved ✓');
   records[currentIdx].annotation = JSON.parse(JSON.stringify(annotation));
   updateStats();
+  renderList();
 }
 
 async function exportExcel() {
@@ -691,8 +903,8 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-// Keyboard shortcuts
 document.addEventListener('keydown', e => {
+  if (e.target.id === 'searchInput') return;
   if (['INPUT','TEXTAREA'].includes(e.target.tagName)) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveAndNext(); }
     return;

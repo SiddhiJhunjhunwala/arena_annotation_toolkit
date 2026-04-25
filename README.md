@@ -2,7 +2,7 @@
 
 **Part of**: *Beyond Explicit Corrections: Benchmarking Implicit Behavioral Signal Learning in Multi-Session Collaborative LLM Agents*
 
-This toolkit mines the `lmarena-ai/arena-human-preference-55k` dataset for real-world examples of **implicit behavioral signals** — the behavioral cues users give when they're dissatisfied with an AI response, without ever saying so directly. These examples feed into the BSEM benchmark dataset (Day 2 of the project plan).
+This toolkit mines the `lmarena-ai/arena-human-preference-55k` dataset for real-world examples of **implicit behavioral signals** — the behavioral cues users give when they're dissatisfied with an AI response, without ever saying so directly. These examples feed into the BSEM benchmark dataset.
 
 ---
 

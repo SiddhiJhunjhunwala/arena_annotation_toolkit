@@ -81,7 +81,6 @@ cd arena_annotation_toolkit
 pip install -r requirements.txt
 ```
 
-
 ---
 
 ## Step 1 — Download & Filter
@@ -184,7 +183,37 @@ Progress auto-saves after every record to `data/arena_candidates.json`.
 
 ---
 
-## Step 3 — Export to Excel
+## Step 3.5 — Sample 100 Random Conversations (optional)
+
+```bash
+python sample100.py
+```
+
+Randomly samples 100 records from `data/arena_candidates.json` and saves them to `data/arena_sample100.json`. Useful for:
+- A quick spot-check of candidate quality before committing to annotating all 229
+- Sharing a representative subset with a second annotator
+- Using as a smaller working set during BSEM Stage 1 prompt development
+
+Prints a signal breakdown so you can see the distribution of the sample:
+```
+Sampled 100 from 229 total
+Signal breakdown:
+  frustration_marker: 52
+  response_ignoring: 47
+  task_abandonment: 1
+Saved -> data/arena_sample100.json
+```
+
+The output file has the same JSON structure as `arena_candidates.json` and works directly with `annotator_app.py`. To annotate the sample instead of the full set, change `DATA_FILE` in `annotator_app.py`:
+```python
+DATA_FILE = Path("data/arena_sample100.json")  # line 14
+```
+
+> **Note**: `sample100.py` not `sample_100.py` — the underscore before a number causes some terminals to misparse the filename as a markdown link.
+
+---
+
+
 
 Click **⬇ Export Excel** in the UI, or run:
 
@@ -244,9 +273,11 @@ arena_annotation_toolkit/
 ├── requirements.txt          # pip dependencies
 ├── download_data.py          # Step 1: download, filter, extract candidates
 ├── annotator_app.py          # Step 2: Flask annotation UI
+├── sample100.py              # Step 3.5: sample 100 random records
 ├── save_annotations.py       # Step 3: export to Excel
 ├── README.md                 # this file
 └── data/
-    ├── arena_candidates.json # all candidates + annotations (auto-saved)
+    ├── arena_candidates.json    # all candidates + annotations (auto-saved)
+    ├── arena_sample100.json     # 100-record random sample (optional)
     └── arena_annotations.xlsx  # final Excel export
 ```

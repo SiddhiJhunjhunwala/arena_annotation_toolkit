@@ -783,12 +783,20 @@ function renderRecord(idx) {
     `<span class="signal-badge sig-${s}">${s.replace(/_/g, ' ')}</span>`
   ).join(' ');
 
+  const metaExtras = [
+    rec.language ? `<span style="color:var(--muted)">🌐 ${escHtml(rec.language)}</span>` : '',
+    rec.is_code  ? `<span style="color:var(--accent3)">{ } code</span>` : '',
+    rec.dataset_domain ? `<span style="color:var(--muted)">${escHtml(rec.dataset_domain)}</span>` : '',
+    rec.timestamp ? `<span style="color:var(--muted);font-size:10px">${escHtml(String(rec.timestamp).substring(0,10))}</span>` : '',
+  ].filter(Boolean).join(' · ');
+
   document.getElementById('main').innerHTML = `
     <div class="record-meta">
-      <span>#${escHtml(String(rec.question_id || currentIdx))}</span>
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">#${escHtml(String(rec.question_id || currentIdx))}</span>
       ${badges}
       <span>Winner: <strong style="color:var(--accent3)">${rec.winner || '—'}</strong></span>
-      <span style="color:var(--muted)">${rec.num_user_turns || ''} user turns</span>
+      <span style="color:var(--muted)">${rec.num_user_turns || ''} turns</span>
+      ${metaExtras}
     </div>
     <div>
       <div class="convo-label">Model A (${escHtml(rec.model_a || '')})</div>

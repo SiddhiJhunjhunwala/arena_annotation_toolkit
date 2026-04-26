@@ -1,17 +1,17 @@
 """
-Step 1: Download lmarena-ai/arena-human-preference-55k and extract
+Step 1: Download lmarena-ai/arena-human-preference-140k and extract
 candidate rows for implicit signal annotation.
 
-Actual schema:
-  - prompt      : list of {"role": ..., "content": ...} — the conversation history
-  - response_a  : model A's final response (string or list)
-  - response_b  : model B's final response
-  - winner_model_a, winner_model_b, winner_tie : 0/1 flags
-  - model_a, model_b : model names
+Schema (140k — proper role/content dicts, no flat JSON strings):
+  conversation_a/b : list of {role, content: [{type, text, image, mimeType}]}
+  winner           : "model_a" | "model_b" | "tie" | "both_bad"
+  category_tag     : dict with domain/complexity tags
+  language         : "en", "pl", "de", etc.
+  is_code          : bool
+  timestamp        : datetime
 
-Multi-turn = prompt has >= 4 user turns — enough conversational history for
-behavioral patterns (frustration, ignoring, abandonment) to be meaningful.
-Single-turn or short exchanges are skipped.
+Multi-turn gate: >= 4 user turns in conversation_a.
+Only English conversations by default (set ENGLISH_ONLY=False to include all).
 
 Run: python download_data.py
 Output: data/arena_candidates.json
@@ -22,172 +22,163 @@ from pathlib import Path
 from datasets import load_dataset
 from tqdm import tqdm
 
-OUT_DIR = Path("data")
+OUT_DIR      = Path("data")
 OUT_DIR.mkdir(exist_ok=True)
-OUT_FILE = OUT_DIR / "arena_candidates.json"
+OUT_FILE     = OUT_DIR / "arena_candidates.json"
+ENGLISH_ONLY = True   # set False to include all languages
+TARGET_PER_TYPE = 120
+
+# ── Signal regexes ────────────────────────────────────────────────────────────
 
 FRUSTRATION_RE = re.compile(
     r"\b(ugh|seriously\??|come on|that'?s not|still wrong|no[,!]? that|"
     r"again\??|wtf|what the|not what i|try again|wrong again|"
     r"you'?re not|doesn'?t work|didn'?t work|still not|that is not|"
-    r"not right|you misunderstood|that('?s| is) wrong)\b",
+    r"not right|you misunderstood|that('?s| is) wrong|"
+    r"still not (right|correct|working)|not (what|how) i (asked|wanted|meant))\b",
     re.IGNORECASE,
 )
 
 ABANDONMENT_RE = re.compile(
     r"\b(forget it|never mind|nevermind|forget this|this is useless|"
     r"give up|doesn'?t matter|not worth|too hard|skip it|"
-    r"don'?t bother|leave it|drop it|scrap it)\b",
+    r"don'?t bother|leave it|drop it|scrap it|just forget|"
+    r"let'?s move on|moving on|can we just|start over)\b",
     re.IGNORECASE,
 )
 
 TOPIC_SHIFT_RE = re.compile(
     r"^(ok(ay)?[,.]?\s+)?(now[,]?\s+|next[,]?\s+|can you|could you|"
     r"what about|let'?s (try|do|move|talk)|instead[,]?\s|"
-    r"actually[,]?\s|moving on|different (question|topic))",
+    r"actually[,]?\s|moving on|different (question|topic)|"
+    r"switch(ing)? to|on a (different|another)|forget that[,]?\s)",
     re.IGNORECASE,
 )
 
-USER_ROLES      = {"user", "human"}
-ASSISTANT_ROLES = {"assistant", "gpt", "bot", "model"}
+# ── Schema parsing ────────────────────────────────────────────────────────────
+
+def extract_text(content) -> str:
+    """
+    content field is a list of {type, text, image, mimeType} blocks.
+    Extract and join all text blocks.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                t = block.get("text") or block.get("content") or ""
+                if t:
+                    parts.append(str(t))
+            elif isinstance(block, str):
+                parts.append(block)
+        return " ".join(parts)
+    return str(content)
 
 
-def parse_prompt_as_user_turns(raw) -> list:
+def parse_conversation(conv_raw) -> list:
     """
-    prompt is a JSON string of a flat list of user messages only.
-    e.g. '["What is X?", "How about Y?", "And Z?"]'
-    Returns list of {"role": "user", "content": str}
+    Parse conversation_a or conversation_b into
+    list of {"role": "user"|"assistant", "content": str}
     """
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            return [{"role": "user", "content": raw}]
-    if not isinstance(raw, list):
+    if not conv_raw:
         return []
     turns = []
-    for item in raw:
-        if isinstance(item, str):
-            turns.append({"role": "user", "content": item})
-        elif isinstance(item, dict):
-            content = item.get("content") or item.get("value") or item.get("text") or ""
-            turns.append({"role": "user", "content": str(content)})
+    for turn in conv_raw:
+        if not isinstance(turn, dict):
+            continue
+        role    = (turn.get("role") or "").lower()
+        content = extract_text(turn.get("content"))
+        if role in ("user", "human"):
+            turns.append({"role": "user", "content": content})
+        elif role in ("assistant", "gpt", "model", "bot"):
+            turns.append({"role": "assistant", "content": content})
     return turns
 
 
-def parse_responses(raw) -> list:
-    """
-    response_a / response_b is a JSON string of a flat list of model responses,
-    one per user turn. e.g. '["Response to Q1", "Response to Q2", ...]'
-    Returns list of strings.
-    """
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return [str(r) for r in parsed]
-            return [str(parsed)]
-        except Exception:
-            return [raw]
-    if isinstance(raw, list):
-        return [str(r) for r in raw]
-    return [str(raw)]
+def get_user_turns(turns: list) -> list:
+    return [t["content"] for t in turns if t["role"] == "user"]
 
 
-def get_response_text(raw) -> str:
-    """Get full concatenated response text (for signal detection)."""
-    responses = parse_responses(raw)
-    return " ".join(responses)
-
-
-def diagnose_schema(ds, n=5):
-    print("\n── Schema Diagnostic ─────────────────────────────────────────────")
-    for i, row in enumerate(ds):
-        if i >= n:
-            break
-        prompt     = row.get("prompt")
-        response_a = row.get("response_a")
-        print(f"\nRow {i}:")
-        print(f"  Keys: {list(row.keys())}")
-        print(f"  winner_model_a={row.get('winner_model_a')}  winner_model_b={row.get('winner_model_b')}  winner_tie={row.get('winner_tie')}")
-        print(f"  type(prompt): {type(prompt).__name__}")
-        if isinstance(prompt, list):
-            print(f"  len(prompt): {len(prompt)}")
-            if prompt:
-                print(f"  prompt[0]: {repr(prompt[0])[:250]}")
-            if len(prompt) > 1:
-                print(f"  prompt[1]: {repr(prompt[1])[:250]}")
-        elif isinstance(prompt, str):
-            print(f"  prompt (str): {repr(prompt[:250])}")
-        print(f"  type(response_a): {type(response_a).__name__}")
-        print(f"  response_a: {repr(get_response_text(response_a)[:150])}")
-
-        parsed     = parse_prompt_as_user_turns(prompt)
-        responses  = parse_responses(response_a)
-        print(f"  --> parsed user turns: {len(parsed)}")
-        print(f"  --> parsed responses:  {len(responses)}")
-        if parsed:
-            print(f"  --> parsed[0]: {repr(parsed[0])[:200]}")
-        if responses:
-            print(f"  --> response[0]: {repr(responses[0][:150])}")
-    print("\n──────────────────────────────────────────────────────────────────\n")
+def is_multi_turn(turns: list) -> bool:
+    return len(get_user_turns(turns)) >= 4
 
 
 def get_winner(row) -> str:
-    """Normalize winner flags into a string."""
-    if row.get("winner_tie"):
+    w = (row.get("winner") or "").lower().replace(" ", "_")
+    # normalise variants
+    if w in ("both_bad", "tie (bothbad)", "bothbad"):
+        return "both_bad"
+    if w in ("tie", "tie (both good)", "both_good"):
         return "tie"
-    if row.get("winner_model_a"):
+    if w in ("model_a", "a"):
         return "model_a"
-    if row.get("winner_model_b"):
+    if w in ("model_b", "b"):
         return "model_b"
+    return w
+
+
+def infer_domain(row) -> str:
+    """Use category_tag if available, else is_code flag."""
+    cat = row.get("category_tag") or {}
+    criteria = cat.get("criteria_v0.1") or {}
+    if row.get("is_code"):
+        return "coding"
+    # heuristic from category tags
+    if criteria.get("math"):
+        return "mathematics"
+    if criteria.get("creative_writing") or (cat.get("creative_writing_v0.1") or {}).get("creative_writing"):
+        return "writing"
+    if criteria.get("domain_knowledge") or criteria.get("problem_solving"):
+        return "general_knowledge"
     return ""
 
 
-def get_user_turns(turns: list) -> list:
-    """Works on both list-of-dicts and returns content strings."""
-    return [t["content"] for t in turns if isinstance(t, dict) and t.get("role") == "user"]
+# ── Signal detection ──────────────────────────────────────────────────────────
 
-
-def is_multi_turn(user_turns: list) -> bool:
-    """user_turns is already a list of {"role":"user","content":...} dicts from parse_prompt_as_user_turns.
-    Multi-turn = user sent >= 4 messages."""
-    return len(user_turns) >= 4
-
-
-def detect_signals(user_turns: list, responses_a: list, winner: str) -> list:
+def detect_signals(turns_a: list, winner: str) -> list:
     """
-    user_turns: list of {"role":"user","content":str} — all user messages in order
-    responses_a: list of str — model A's per-turn responses (used for context)
     Returns list of signal dicts with rich metadata.
+    turns_a: parsed conversation_a (full interleaved turns).
     """
     signals = []
-    winner  = (winner or "").lower()
     seen    = set()
 
-    user_contents = [t["content"] for t in user_turns]  # extract strings
-    followups     = user_contents[1:]  # skip opening message
+    user_contents = get_user_turns(turns_a)
+    followups     = user_contents[1:]
 
     def get_context(user_idx: int) -> str:
-        """Get model A's response to the turn BEFORE this user turn."""
-        prev_resp_idx = user_idx - 1
-        if 0 <= prev_resp_idx < len(responses_a):
-            return responses_a[prev_resp_idx][:300]
-        return ""
+        """Get assistant turn just before user turn at user_idx."""
+        # Walk backwards through turns_a to find it
+        seen_users = 0
+        for t in turns_a:
+            if t["role"] == "user":
+                if seen_users == user_idx:
+                    break
+                seen_users += 1
+            elif t["role"] == "assistant" and seen_users == user_idx:
+                return t["content"][:400]
+        # simpler: assistant turn index = user_idx - 1 in interleaved
+        asst_turns = [t["content"] for t in turns_a if t["role"] == "assistant"]
+        idx = user_idx - 1
+        return asst_turns[idx][:400] if 0 <= idx < len(asst_turns) else ""
+
+    # turn number in full interleaved convo (1-indexed):
+    # user turn i → position 2*i+1 (0-indexed user_idx → turn_number = 2*i+1+1)
+    def turn_num(user_idx):
+        return user_idx * 2 + 1  # user is always odd positions (1,3,5...)
 
     # ── Response Ignoring ─────────────────────────────────────────────────────
-    if winner == "tie":
-        # Point to last user turn as the accumulated ignoring signal
+    if winner == "both_bad":
         u_idx = len(user_contents) - 1
         signals.append({
             "signal_type":      "response_ignoring",
-            "turn_number":      u_idx * 2 + 1,   # in full interleaved convo (1-indexed)
+            "turn_number":      turn_num(u_idx),
             "user_turn_number": u_idx + 1,
-            "how_its_given":    "User voted both responses unsatisfactory (tie)",
+            "how_its_given":    "User voted both responses bad (both_bad winner)",
             "context":          get_context(u_idx),
             "user_msg_preview": user_contents[u_idx][:200],
         })
@@ -198,7 +189,7 @@ def detect_signals(user_turns: list, responses_a: list, winner: str) -> list:
             u_idx = fu_idx + 1
             signals.append({
                 "signal_type":      "response_ignoring",
-                "turn_number":      u_idx * 2 + 1,
+                "turn_number":      turn_num(u_idx),
                 "user_turn_number": u_idx + 1,
                 "how_its_given":    "Follow-up starts with topic shift — prior response not acknowledged",
                 "context":          get_context(u_idx),
@@ -213,7 +204,7 @@ def detect_signals(user_turns: list, responses_a: list, winner: str) -> list:
             u_idx = fu_idx + 1
             signals.append({
                 "signal_type":      "frustration_marker",
-                "turn_number":      u_idx * 2 + 1,
+                "turn_number":      turn_num(u_idx),
                 "user_turn_number": u_idx + 1,
                 "how_its_given":    "Explicit frustration language in follow-up",
                 "context":          get_context(u_idx),
@@ -229,7 +220,7 @@ def detect_signals(user_turns: list, responses_a: list, winner: str) -> list:
                 u_idx = fu_idx + 1
                 signals.append({
                     "signal_type":      "frustration_marker",
-                    "turn_number":      u_idx * 2 + 1,
+                    "turn_number":      turn_num(u_idx),
                     "user_turn_number": u_idx + 1,
                     "how_its_given":    f"Short curt follow-up ({wc} words) with negative marker",
                     "context":          get_context(u_idx),
@@ -243,7 +234,7 @@ def detect_signals(user_turns: list, responses_a: list, winner: str) -> list:
         u_idx = len(user_contents) - 1
         signals.append({
             "signal_type":      "task_abandonment",
-            "turn_number":      u_idx * 2 + 1,
+            "turn_number":      turn_num(u_idx),
             "user_turn_number": u_idx + 1,
             "how_its_given":    "Give-up language in final user message",
             "context":          get_context(u_idx),
@@ -254,95 +245,110 @@ def detect_signals(user_turns: list, responses_a: list, winner: str) -> list:
     return signals
 
 
+# ── Diagnostic ────────────────────────────────────────────────────────────────
 
-def build_full_turns(user_turns: list, responses: list) -> list:
-    """
-    Interleave user messages with model responses into a full conversation.
-    user_turns: list of {"role":"user","content":...}
-    responses:  list of str, one per user turn (may be shorter if truncated)
-    """
-    turns = []
-    for i, ut in enumerate(user_turns):
-        turns.append({"role": "user", "content": ut["content"][:1500]})
-        if i < len(responses):
-            turns.append({"role": "assistant", "content": responses[i][:1500]})
-    return turns
+def diagnose_schema(ds, n=3):
+    print("\n── Schema Diagnostic ─────────────────────────────────────────────")
+    for i, row in enumerate(ds):
+        if i >= n:
+            break
+        conv_a  = row.get("conversation_a") or []
+        parsed  = parse_conversation(conv_a)
+        u_turns = get_user_turns(parsed)
+        print(f"\nRow {i}:")
+        print(f"  id={row.get('id','')} | winner={row.get('winner')} | lang={row.get('language')} | is_code={row.get('is_code')}")
+        print(f"  model_a={row.get('model_a')} | model_b={row.get('model_b')}")
+        print(f"  conv_a turns: {len(conv_a)} raw → {len(parsed)} parsed → {len(u_turns)} user turns")
+        if parsed:
+            print(f"  parsed[0]: role={parsed[0]['role']} | content={repr(parsed[0]['content'][:120])}")
+        if len(parsed) > 1:
+            print(f"  parsed[1]: role={parsed[1]['role']} | content={repr(parsed[1]['content'][:120])}")
+        domain = infer_domain(row)
+        print(f"  inferred domain: {domain or '(unknown)'}")
+    print("\n──────────────────────────────────────────────────────────────────\n")
 
 
-def build_display_conversation(user_turns: list, responses_a: list, responses_b: list) -> dict:
-    return {
-        "conversation_a": build_full_turns(user_turns, responses_a),
-        "conversation_b": build_full_turns(user_turns, responses_b),
-    }
-
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    print("Loading lmarena-ai/arena-human-preference-55k from HuggingFace...")
-    ds = load_dataset("lmarena-ai/arena-human-preference-55k", split="train")
+    print("Loading lmarena-ai/arena-human-preference-140k from HuggingFace...")
+    ds = load_dataset("lmarena-ai/arena-human-preference-140k", split="train")
     print(f"  Total rows: {len(ds)}")
 
-    diagnose_schema(ds, n=5)
+    diagnose_schema(ds, n=3)
 
     candidates = {
         "response_ignoring":  [],
         "frustration_marker": [],
         "task_abandonment":   [],
     }
-    TARGET_PER_TYPE = 120
 
-    stats = {"single_turn": 0, "multi_turn": 0, "no_signal": 0}
+    stats = {"skipped_lang": 0, "single_turn": 0, "multi_turn": 0, "no_signal": 0}
 
-    print("Scanning (multi-turn only, ≥4 user turns)...")
+    print(f"Scanning (multi-turn ≥4, {'English only' if ENGLISH_ONLY else 'all languages'})...")
     for row in tqdm(ds):
-        user_turns  = parse_prompt_as_user_turns(row.get("prompt"))
-        responses_a = parse_responses(row.get("response_a"))
-        responses_b = parse_responses(row.get("response_b"))
-        winner      = get_winner(row)
+        # Language filter
+        if ENGLISH_ONLY and row.get("language", "en") != "en":
+            stats["skipped_lang"] += 1
+            continue
 
-        if not is_multi_turn(user_turns):
+        turns_a = parse_conversation(row.get("conversation_a"))
+        turns_b = parse_conversation(row.get("conversation_b"))
+
+        if not is_multi_turn(turns_a):
             stats["single_turn"] += 1
             continue
 
         stats["multi_turn"] += 1
-        signals = detect_signals(user_turns, responses_a, winner)
+        winner  = get_winner(row)
+        signals = detect_signals(turns_a, winner)
 
         if not signals:
             stats["no_signal"] += 1
             continue
 
-        convos    = build_display_conversation(user_turns, responses_a, responses_b)
         sig_types = list({s["signal_type"] for s in signals})
         priority  = ["response_ignoring", "frustration_marker", "task_abandonment"]
         primary   = next((s for p in priority for s in signals if s["signal_type"] == p), signals[0])
+        domain    = infer_domain(row)
 
         record = {
-            # ── Identity ────────────────────────────────────────────────────
+            # ── Identity ──────────────────────────────────────────────────
             "question_id":        row.get("id", ""),
+            "conv_id":            row.get("id", ""),
             "winner":             winner,
             "model_a":            row.get("model_a", ""),
             "model_b":            row.get("model_b", ""),
-            # ── Auto-inferred columns ────────────────────────────────────────
-            "conv_id":            row.get("id", ""),
+            # ── Auto-inferred columns ──────────────────────────────────────
             "turn":               primary["turn_number"],
             "feedback_type":      primary["signal_type"],
             "how_its_given":      primary["how_its_given"],
             "context":            primary["context"],
             "user_msg_preview":   primary["user_msg_preview"],
-            # ── All detected signals (may be >1) ─────────────────────────────
+            # ── Metadata from dataset ──────────────────────────────────────
+            "language":           row.get("language", ""),
+            "is_code":            row.get("is_code", False),
+            "timestamp":          str(row.get("timestamp", "")),
+            "dataset_domain":     domain,
+            # ── All signals ────────────────────────────────────────────────
             "detected_signals":   sig_types,
             "all_signal_details": signals,
-            "num_user_turns":     len(user_turns),
-            # ── Conversations for annotation UI ──────────────────────────────
-            "conversation_a":     convos["conversation_a"],
-            "conversation_b":     convos["conversation_b"],
-            # ── Annotator-filled fields ──────────────────────────────────────
+            "num_user_turns":     len(get_user_turns(turns_a)),
+            # ── Conversations (truncated for display) ──────────────────────
+            "conversation_a": [
+                {"role": t["role"], "content": t["content"][:1500]} for t in turns_a
+            ],
+            "conversation_b": [
+                {"role": t["role"], "content": t["content"][:1500]} for t in turns_b
+            ],
+            # ── Annotator fields ───────────────────────────────────────────
             "annotation": {
-                "confirmed_signal":    None,   # response_ignoring | frustration_marker | task_abandonment | none
-                "confidence":          None,   # high | medium | low
-                "task_domain":         None,   # mathematics | writing | coding | general_knowledge
-                "signal_evidence":     "",     # which turn shows it
-                "what_is_updated":     "",     # what preference/behavior should the agent update
-                "inferred_preference": "",     # free-text preference hypothesis
+                "confirmed_signal":    None,
+                "confidence":          None,
+                "task_domain":         domain or None,  # pre-fill from dataset
+                "signal_evidence":     "",
+                "what_is_updated":     "",
+                "inferred_preference": "",
                 "notes":               "",
             },
         }
@@ -354,6 +360,7 @@ def main():
         if all(len(v) >= TARGET_PER_TYPE for v in candidates.values()):
             break
 
+    # Interleave signal types
     all_candidates = []
     if any(len(v) > 0 for v in candidates.values()):
         max_len = max(len(v) for v in candidates.values())
@@ -363,19 +370,21 @@ def main():
                     all_candidates.append(sig_list[i])
 
     print(f"\n── Results ──────────────────────────────────────────────────────")
-    print(f"  Single-turn (skipped):  {stats['single_turn']}")
-    print(f"  Multi-turn (processed): {stats['multi_turn']}")
-    print(f"  Multi-turn, no signal:  {stats['no_signal']}")
+    print(f"  Skipped (non-English): {stats['skipped_lang']}")
+    print(f"  Single-turn (skipped): {stats['single_turn']}")
+    print(f"  Multi-turn processed:  {stats['multi_turn']}")
+    print(f"  Multi-turn, no signal: {stats['no_signal']}")
     for sig, lst in candidates.items():
         print(f"  {sig}: {len(lst)}")
-    print(f"  Total candidates: {len(all_candidates)}")
+    print(f"  Total candidates:      {len(all_candidates)}")
+    print(f"─────────────────────────────────────────────────────────────────")
 
     with open(OUT_FILE, "w") as f:
         json.dump(all_candidates, f, indent=2)
     print(f"\nSaved → {OUT_FILE}")
 
     if len(all_candidates) == 0:
-        print("\n*** ZERO CANDIDATES — paste the Schema Diagnostic output for debugging ***")
+        print("\n*** ZERO CANDIDATES — check Schema Diagnostic output above ***")
     else:
         print("Next: python annotator_app.py")
 

@@ -2,75 +2,92 @@
 
 **Part of**: *Beyond Explicit Corrections: Benchmarking Implicit Behavioral Signal Learning in Multi-Session Collaborative LLM Agents*
 
-This toolkit mines the `lmarena-ai/arena-human-preference-55k` dataset for real-world examples of **implicit behavioral signals** — the behavioral cues users give when they're dissatisfied with an AI response, without ever saying so directly. These examples feed into the BSEM benchmark dataset.
+This toolkit mines `lmarena-ai/arena-human-preference-140k` (and optionally the earlier `55k` version) for real-world examples of **implicit behavioral signals** — the behavioral cues users give when dissatisfied with an AI response, without ever saying so directly. Annotated examples feed into the BSEM benchmark dataset.
 
 ---
 
 ## Why This Dataset
 
-`lmarena-ai/arena-human-preference-55k` contains 57,477 real human-AI conversations from Chatbot Arena, where users compared two model responses and voted for the better one. Because votes are cast by real users mid-conversation, the dataset contains naturally occurring instances of:
+`lmarena-ai/arena-human-preference-140k` contains 135,634 real human-AI conversations from Chatbot Arena, where users compared two model responses and voted for the better one. Because votes are cast by real users mid-conversation, the dataset contains naturally occurring instances of:
 
-- Users who kept talking even though neither response satisfied them (response ignoring proxy)
-- Users who expressed frustration in follow-up messages (frustration markers)
-- Users who gave up and switched topics or abandoned the task (task abandonment)
+- Users who kept talking even though neither response satisfied them (**response ignoring** proxy)
+- Users who expressed frustration in follow-up messages (**frustration markers**)
+- Users who gave up and switched topics or abandoned the task (**task abandonment**)
 
-This gives us **grounded, real-world signal examples** to draw from, rather than purely synthetic data. The annotations produced here become seed examples for the WildChat-style scenario construction in Section 4.1 of the paper.
+This gives us **grounded, real-world signal examples** rather than purely synthetic data. Annotations become seed examples for the WildChat-style scenario construction in Section 4.1 of the paper.
 
 ---
 
-## Dataset Schema
-
-The actual fields in `lmarena-ai/arena-human-preference-55k`:
+## Dataset Schema (140k)
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | str | Unique conversation ID |
-| `prompt` | str | JSON-encoded list of user messages only — `["Q1", "Q2", "Q3"]` |
-| `response_a` | str | JSON-encoded list of Model A's responses — `["R1", "R2", "R3"]` |
-| `response_b` | str | JSON-encoded list of Model B's responses — `["R1", "R2", "R3"]` |
-| `model_a` | str | Model A name (e.g. `gpt-4o`) |
-| `model_b` | str | Model B name (e.g. `claude-3-5-sonnet`) |
-| `winner_model_a` | int | 1 if user preferred Model A |
-| `winner_model_b` | int | 1 if user preferred Model B |
-| `winner_tie` | int | 1 if user voted tie (neither response satisfied them) |
+| `id` | str | UUID conversation identifier |
+| `model_a` / `model_b` | str | Model names (e.g. `gemini-2.5-pro`, `claude-3-7-sonnet`) |
+| `winner` | str | `"model_a"` / `"model_b"` / `"tie"` / `"both_bad"` |
+| `conversation_a` / `conversation_b` | list | Full interleaved turns: `[{role, content: [{type, text, image}]}]` |
+| `full_conversation` | list | Combined view with both model responses per turn |
+| `category_tag` | dict | Domain/complexity tags (`domain_knowledge`, `creative_writing`, etc.) |
+| `language` | str | ISO language code (`"en"`, `"pl"`, `"de"`, …) |
+| `is_code` | bool | Whether the conversation is code-related |
+| `timestamp` | datetime | When the conversation was recorded |
 
-`prompt` and `response_a/b` interleave as: `Q1 → R1 → Q2 → R2 → Q3 → R3 ...`
-
-**Important**: The dataset is overwhelmingly single-turn (~98.5%). Only ~296 rows have ≥2 user turns, and only a subset of those have ≥4 turns (our threshold for meaningful behavioral signal analysis). Task abandonment examples are extremely rare (~1 confirmed). Frustration markers and response ignoring are more recoverable.
+Unlike the older 55k dataset (which stored conversations as flat JSON strings), the 140k dataset uses proper structured dicts with role/content blocks — responses are already embedded inside `conversation_a/b`.
 
 ---
 
-## What We're Extracting and Why
+## What We Extract and Why
 
 ### Signal Types
 
-| Signal | What It Means for BSEM | Detection Proxy in This Dataset |
+| Signal | Research Meaning | Detection Proxy |
 |---|---|---|
-| **Response Ignoring** | User's next turn is topically disconnected — they didn't engage with the agent's previous response at all | `winner_tie == 1` in a multi-turn row (user kept going but was never satisfied), OR follow-up starts with a topic-shift phrase |
-| **Frustration Marker** | User expresses impatience without stating the core problem — short curt follow-ups, negative language | Regex match on frustration phrases in follow-up turns (e.g. "still wrong", "that's not it"); OR ≤12-word follow-up with `?/!/no/not/still/wrong` |
-| **Task Abandonment** | User gives up entirely after accumulated failure | Regex match on give-up phrases in the final user message (e.g. "forget it", "never mind", "give up") |
+| **Response Ignoring** | User's next turn is topically disconnected — they didn't engage with the prior response at all | `winner == "both_bad"` in a multi-turn row; OR follow-up starts with a topic-shift phrase (`"now let's…"`, `"can you instead…"`) |
+| **Frustration Marker** | User expresses impatience without stating the core problem | Regex on frustration phrases in follow-up turns (`"still wrong"`, `"that's not what I asked"`); OR ≤12-word curt follow-up with `?/!/no/not/still/wrong` |
+| **Task Abandonment** | User gives up entirely after accumulated failure | Regex on give-up phrases in final user message (`"forget it"`, `"never mind"`, `"let's move on"`) |
 
-### Multi-Turn Requirement (≥4 user turns)
+### Multi-Turn Gate (≥4 user turns)
 
-We only keep rows where the user sent **at least 4 messages**. This is a deliberate design decision:
+Only rows where the user sent **at least 4 messages** are kept. This is a deliberate design decision:
 
-- Single-turn rows (one user message → two model responses → vote) cannot show behavioral patterns — there's no follow-up behavior to observe
-- 2–3 turn rows give minimal context — it's hard to distinguish frustration from normal clarification
-- ≥4 turns means the user went back and forth enough times that behavioral signals (frustration buildup, repeated rephrasing, topic ignoring) are clearly visible and distinguishable from noise
+- Single-turn rows cannot show behavioral patterns — there's no follow-up behavior to observe
+- 2–3 turn rows give minimal context — hard to distinguish frustration from normal clarification
+- ≥4 turns means the user went back and forth enough that signals are clearly visible and defensible
 
-### What Gets Auto-Inferred
+### Known Limitation: Task Abandonment is Rare
 
-`download_data.py` auto-computes these fields for every candidate before you annotate:
+Both the 55k and 140k datasets yield very few task abandonment examples (~1–6 confirmed). Real Arena users rarely type explicit give-up phrases. The ~50 abandonment scenarios needed for BSEM will need to be generated synthetically using WildChat episodes as seeds (see plan.md, Day 2).
 
-| Column | How It's Computed |
+### Auto-Inferred Fields
+
+`download_data.py` auto-computes these before annotation:
+
+| Field | How Computed |
 |---|---|
-| **Turn** | The exact turn number (in the full interleaved conversation) where the signal appears |
-| **Feedback Type** | The detected signal type from the heuristics |
-| **How It's Given** | Human-readable description of why the heuristic fired (e.g. "Explicit frustration language in follow-up", "Short curt follow-up (6 words) with negative marker") |
-| **Context** | Model A's response immediately before the signal turn — what the user was reacting to |
-| **User Message Preview** | The actual signal-turn text, truncated to 200 chars |
+| **Turn** | Exact position in the full interleaved conversation where the signal appears |
+| **Feedback Type** | Detected signal type from heuristics |
+| **How It's Given** | Human-readable description (e.g. `"Explicit frustration language in follow-up"`) |
+| **Context** | Model's response immediately before the signal turn |
+| **User Message Preview** | Signal-turn text, truncated to 200 chars |
+| **Dataset Domain** | Auto-inferred from `is_code` + `category_tag` fields |
+| **Task Domain** | Pre-filled in annotation from dataset domain (overridable) |
 
-Your job as annotator is to verify these auto-inferences and add the fields the heuristics can't compute: task domain, what preference was violated, and whether the heuristic actually fired correctly.
+---
+
+## Dataset Stats (140k, English only, ≥4 turns)
+
+```
+Total rows:              135,634
+Skipped (non-English):    64,459
+Single-turn (skipped):    69,486
+Multi-turn processed:      1,689
+Multi-turn, no signal:       705
+─────────────────────────────────
+response_ignoring:           120
+frustration_marker:          120
+task_abandonment:              6
+Total candidates:            246
+```
 
 ---
 
@@ -81,44 +98,32 @@ cd arena_annotation_toolkit
 pip install -r requirements.txt
 ```
 
+
+> **Python env note**: If you have multiple Python environments (e.g. miniconda + system Python), make sure `pip` and `python` point to the same environment. Use `/opt/miniconda3/bin/pip install datasets` if needed.
+
 ---
 
-## Step 1 — Download & Filter
+## Workflow
+
+### Step 1 — Download & Filter
 
 ```bash
 python download_data.py
 ```
 
-Downloads all 57,477 rows from HuggingFace, filters to multi-turn conversations (≥4 user turns), runs signal detection heuristics, and saves up to 120 candidates per signal type.
+Downloads all 135,634 rows, filters to English multi-turn conversations (≥4 user turns), runs signal detection heuristics, saves up to 120 candidates per signal type.
 
-**What it prints:**
-```
-── Schema Diagnostic ─────────────────────────────────────────
-Row 0:
-  type(prompt): str
-  prompt (str): '["Q1", "Q2", "Q3", "Q4"]'
-  --> parsed user turns: 4
-  --> parsed responses:  4
-  --> parsed[0]: {'role': 'user', 'content': 'Q1'}
-──────────────────────────────────────────────────────────────
-
-── Results ──────────────────────────────────────────────────
-  Single-turn (skipped):  57181
-  Multi-turn (processed): 296
-  Multi-turn, no signal:  96
-  response_ignoring: 108
-  frustration_marker: 120
-  task_abandonment: 1
-  Total candidates: 229
+**Key setting at top of file:**
+```python
+ENGLISH_ONLY = True   # set False to include all languages
+TARGET_PER_TYPE = 120
 ```
 
-Output: `data/arena_candidates.json` — interleaved across signal types for annotation variety.
-
-**Known limitation**: Task abandonment is nearly absent in this dataset (real Arena users rarely type give-up phrases explicitly). The ~50 abandonment scenarios needed for the benchmark will need to be generated synthetically using WildChat episodes as seeds (see plan.md Day 2).
+Output: `data/arena_candidates.json`
 
 ---
 
-## Step 2 — Annotate
+### Step 2 — Annotate
 
 ```bash
 python annotator_app.py
@@ -126,94 +131,95 @@ python annotator_app.py
 
 Then open **`http://127.0.0.1:8765`** in Chrome, Safari, or Firefox.
 
-### What the UI shows
+> **Do not click `python annotator_app.py` if your terminal renders it as a hyperlink** — type the command manually. The underscore in the filename can cause terminal markdown parsers to mangle it.
 
-- **Left panel**: Full conversation in messenger-style bubble UI
-  - User messages → right-aligned green bubbles
-  - AI responses → left-aligned blue bubbles
-  - The auto-detected signal turn → highlighted with a red outline
-  - Both Model A and Model B conversations shown (they share the same user messages but have different AI responses)
-- **Right sidebar**: Annotation fields + auto-inferred metadata (Turn, How It's Given, User Message Preview shown at the top so you don't have to scroll to find the signal)
+### UI Layout
 
-### For each record, you decide:
+Three-column layout:
 
-| Field | What to fill |
+**Left — Conversation List (280px)**
+- Search bar: filter by conversation ID or message text
+- Filter chips: All / Ignoring / Frustration / Abandon / **Todo** (unannotated only)
+- Scrollable list showing ID, signal dot color, ✓ badge when annotated, message preview
+- Click any row to jump to that conversation
+
+**Center — Conversation View**
+- Messenger-style bubble UI: user messages right-aligned (green), AI responses left-aligned (blue)
+- Signal turn highlighted with a red outline
+- Both Model A and Model B conversations shown
+- Header shows: conv ID, signal badges, winner, turn count, 🌐 language, `{ }` code tag, date
+
+**Right — Annotation Sidebar**
+- Auto-inferred metadata shown at top (Turn, How It's Given, User Message Preview)
+- Annotation fields to fill in
+
+### Annotation Fields
+
+| Field | What to Fill |
 |---|---|
-| **Confirmed Signal** | Is the heuristic correct? Which signal type is this actually? |
-| **Confidence** | How certain are you? High / Medium / Low |
-| **Task Domain** | Mathematics / Coding / Writing / General Knowledge |
-| **Signal Evidence** | Which turn shows it — copy the key phrase |
-| **What's Updated** | What should the agent update in its preference model? (e.g. "Response length", "Explanation depth", "Format preference") |
-| **Inferred Preference** | Free-text preference hypothesis (e.g. "User prefers step-by-step debug output rather than just the fixed code") |
+| **Confirmed Signal** | Is the heuristic correct? Which signal is this actually? |
+| **Confidence** | High / Medium / Low |
+| **Task Domain** | Mathematics / Coding / Writing / General Knowledge (pre-filled from dataset where possible) |
+| **Signal Evidence** | The key phrase — copy the exact text that shows the signal |
+| **What's Updated** | What should the agent update? (e.g. `"Response format preference"`, `"Explanation depth"`) |
+| **Inferred Preference** | Full hypothesis sentence (e.g. `"User prefers step-by-step debug output rather than just the fixed code"`) |
 | **Notes** | Edge cases, ambiguity, why you marked None |
 
-### Keyboard shortcuts
+### Keyboard Shortcuts
 
 ```
 i          → confirmed signal: response ignoring
 f          → confirmed signal: frustration marker
 a          → confirmed signal: task abandonment
-n          → confirmed signal: none (heuristic false positive)
+n          → confirmed signal: none (false positive)
 H / M / L  → confidence: high / medium / low
 1          → task domain: mathematics
 2          → task domain: coding
 3          → task domain: writing
 4          → task domain: general knowledge
-→ or Enter → save & next record
-←          → go back to previous record
-Ctrl+Enter → save & next (when cursor is in a text field)
+→ or Enter → save & next
+←          → previous record
+Ctrl+Enter → save & next (from inside a text field)
 ```
 
-Progress auto-saves after every record to `data/arena_candidates.json`.
+Auto-saves to `data/arena_candidates.json` after every record.
 
-### Annotation guidelines
+### Annotation Guidelines
 
-**Confirmed Signal = None** when:
-- The follow-up is just a normal continuation (not frustrated, not ignoring — just asking a follow-up question)
-- The frustration language is casual/rhetorical, not expressing genuine dissatisfaction with the AI
-- The "topic shift" is actually a natural next step in a multi-part task
-- The tie vote is because both responses were genuinely equally good, not because both were bad
+**Mark as None when:**
+- Follow-up is a natural continuation, not frustrated or ignoring
+- Frustration language is casual/rhetorical, not expressing genuine dissatisfaction
+- Topic shift is a natural next step in a multi-part task
+- `both_bad` vote is because responses were genuinely equal, not both bad
 
-**Confidence = Low** when:
-- You can see *something* off but can't pin down the signal type
-- The signal is ambiguous between two types (e.g. could be ignoring or abandonment)
-- The conversation is too short to be sure
+**Confidence = Low when:**
+- Something seems off but you can't pin down the signal type
+- Could be two different signal types (e.g. ignoring vs abandonment)
+- Conversation too short to be sure
 
-**Inferred Preference**: Write this as a complete hypothesis sentence, the way BSEM would output it. Example: *"User prefers concise responses without preamble — Interaction Efficiency preference, coding task"*. This becomes training signal for BSEM Stage 2.
+**Inferred Preference format:** Write as a complete hypothesis the way BSEM Stage 1 would output it:
+> *"User prefers concise responses without preamble — Interaction Efficiency preference, coding task"*
 
 ---
 
-## Step 3.5 — Sample 100 Random Conversations (optional)
+### Step 3 — Sample 100 (optional)
 
 ```bash
 python sample100.py
 ```
 
-Randomly samples 100 records from `data/arena_candidates.json` and saves them to `data/arena_sample100.json`. Useful for:
-- A quick spot-check of candidate quality before committing to annotating all 229
-- Sharing a representative subset with a second annotator
-- Using as a smaller working set during BSEM Stage 1 prompt development
+Randomly samples 100 records from `data/arena_candidates.json` → `data/arena_sample100.json`. Same JSON structure, works directly with `annotator_app.py`.
 
-Prints a signal breakdown so you can see the distribution of the sample:
-```
-Sampled 100 from 229 total
-Signal breakdown:
-  frustration_marker: 52
-  response_ignoring: 47
-  task_abandonment: 1
-Saved -> data/arena_sample100.json
-```
-
-The output file has the same JSON structure as `arena_candidates.json` and works directly with `annotator_app.py`. To annotate the sample instead of the full set, change `DATA_FILE` in `annotator_app.py`:
+To annotate the sample instead of the full set, change line 21 in `annotator_app.py`:
 ```python
-DATA_FILE = Path("data/arena_sample100.json")  # line 14
+DATA_FILE = Path("data/arena_sample100.json")
 ```
 
-> **Note**: `sample100.py` not `sample_100.py` — the underscore before a number causes some terminals to misparse the filename as a markdown link.
+> **Filename note**: The script is named `sample100.py` (not `sample_100.py`) — underscores before numbers cause some terminals to misparse the filename as a markdown link.
 
 ---
 
-
+### Step 4 — Export to Excel
 
 Click **⬇ Export Excel** in the UI, or run:
 
@@ -223,46 +229,49 @@ python save_annotations.py
 
 Output: `data/arena_annotations.xlsx`
 
-### Sheet 1: Annotations
+#### Sheet 1: Annotations
 
-All records with these columns in order:
+Columns in order:
 
 | Column | Source |
 |---|---|
 | Conv ID | Dataset `id` field |
-| Turn | Auto-computed turn number of signal |
+| Turn | Auto-computed signal turn number |
 | Feedback Type | Auto-detected signal type |
 | How It's Given | Auto-described detection method |
-| Context | Model's response before the signal turn |
-| What's Updated | Annotator fills — what preference should change |
-| Notes | Annotator fills — edge cases |
+| Context | Model response before the signal turn |
+| What's Updated | Annotator: what preference should change |
+| Notes | Annotator: edge cases |
 | User Message Preview | Signal turn text (200 chars) |
-| Task Domain | Annotator fills |
+| Task Domain | Annotator: domain |
 | Confirmed Signal | Annotator's verified signal type |
 | Confidence | High / Medium / Low |
 | Signal Evidence | Annotator's key phrase |
 | Inferred Preference | Annotator's preference hypothesis |
-| Winner / Model A / Model B | Dataset metadata |
-| Num User Turns | Total user turns in this conversation |
-| All Detected Signals | All signals the heuristic detected |
+| Winner | `model_a` / `model_b` / `tie` / `both_bad` |
+| Model A / Model B | Model names |
+| Num User Turns | Total user turns |
+| All Detected Signals | All heuristic signals fired |
+| Language | ISO language code |
+| Is Code | Boolean |
+| Dataset Domain | Auto-inferred from category tags |
+| Timestamp | Conversation date |
 
-Rows are color-coded by confirmed signal type: blue = response ignoring, red = frustration marker, yellow = task abandonment, gray = none.
+Color-coded by confirmed signal: 🔵 blue = response ignoring, 🔴 red = frustration marker, 🟡 yellow = task abandonment, ⬜ gray = none.
 
-### Sheet 2: Summary
+#### Sheet 2: Summary
 
-Counts broken down by: signal type, confidence level, task domain, and a signal × domain cross-tab.
+Counts by signal type, confidence, task domain, and signal × domain cross-tab.
 
 ---
 
-## How These Annotations Feed Into the Paper
+## How Annotations Feed Into the Paper
 
-The confirmed and annotated examples from this toolkit are used in three ways:
+1. **Few-shot examples for BSEM Stage 1** — `signal_evidence` and `user_msg_preview` become the 4–6 few-shot examples per signal type in the Stage 1 detection prompt
 
-1. **Few-shot examples for BSEM Stage 1** (Signal Detection prompt) — the annotated `signal_evidence` and `user_msg_preview` fields become the 4–6 few-shot examples per signal type in the Stage 1 prompt
+2. **Seed templates for synthetic generation** (Day 2) — confirmed signal examples are used as seeds for GPT-4o to generate the full 250-scenario benchmark; especially important for frustration markers and response ignoring where real examples exist
 
-2. **Seed templates for synthetic scenario generation** (Day 2, dataset construction) — real WildChat + Arena episodes with confirmed signals are used as seeds for GPT-4o to generate the full 250-scenario benchmark, especially for frustration markers and response ignoring where real examples exist
-
-3. **Taxonomy validation** — the `inferred_preference` field confirms that our 4-category preference taxonomy (Response Style, Explanation Depth, Content Focus, Interaction Efficiency) actually covers the preferences users signal implicitly in real conversations
+3. **Taxonomy validation** — `inferred_preference` entries confirm that the 4-category preference taxonomy (Response Style, Explanation Depth, Content Focus, Interaction Efficiency) covers preferences users signal implicitly in real conversations
 
 ---
 
@@ -270,14 +279,14 @@ The confirmed and annotated examples from this toolkit are used in three ways:
 
 ```
 arena_annotation_toolkit/
-├── requirements.txt          # pip dependencies
-├── download_data.py          # Step 1: download, filter, extract candidates
-├── annotator_app.py          # Step 2: Flask annotation UI
-├── sample100.py              # Step 3.5: sample 100 random records
-├── save_annotations.py       # Step 3: export to Excel
-├── README.md                 # this file
+├── requirements.txt           # pip dependencies
+├── download_data.py           # Step 1: download, filter, extract candidates (140k)
+├── annotator_app.py           # Step 2: Flask annotation UI (port 8765)
+├── sample100.py               # Step 3: sample 100 random records
+├── save_annotations.py        # Step 4: export to Excel
+├── README.md                  # this file
 └── data/
-    ├── arena_candidates.json    # all candidates + annotations (auto-saved)
-    ├── arena_sample100.json     # 100-record random sample (optional)
-    └── arena_annotations.xlsx  # final Excel export
+    ├── arena_candidates.json     # all candidates + annotations (auto-saved)
+    ├── arena_sample100.json      # 100-record random sample (optional)
+    └── arena_annotations.xlsx   # final Excel export
 ```
